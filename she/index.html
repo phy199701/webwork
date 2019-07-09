@@ -1,0 +1,1798 @@
+# 阿里百秀（二）
+
+# 0. 文章列表功能
+
+## 0.1 回顾
+
+实现三表联查：
+
+```sql
+-- 查询文章表的id、文章表的标题、作者昵称、分类名称
+-- 查询的4个字段，在3张表中。肯定要使用连表查询
+-- 语法：select 字段 from 表1 join 表2 on 关系
+-- ali_article  别名 a
+-- ali_admin    别名 b
+-- ali_cate     别名 c
+-- 关系：
+-- 	a.adminid = b.admin_id
+-- 	a.cateid = c.id
+
+select a.id, a.title, b.admin_nickname, c.name
+ from ali_article a
+ join ali_admin b on a.adminid = b.admin_id
+ join ali_cate c on a.cateid = c.id
+```
+
+## 0.2 后端完成数据获取
+
+在admin_post.js 中，在 /admin/post/posts.html 接口中，使用db查询所有的文章，并将数据分配到模板
+
+```js
+// 文章列表接口
+router.get('/admin/post/posts.html', (req, res) => {
+    // SQL换行可以，但是两个关键字或字段之间要加空格
+    let sql = `select a.id, a.title, b.admin_nickname, c.name, a.addtime, a.state
+    from ali_article a
+    join ali_admin b on a.adminid = b.admin_id
+    join ali_cate c on a.cateid = c.id`;
+    db(sql, null, (err, result) => {
+        if (err) throw err;
+        console.log(result);
+        res.render(rootPath + '/view/admin/post/posts.html', {
+            arr: result
+        });
+    });
+});
+```
+
+## 0.3 前端使用模板语法展示数据
+
+在模板 /admin/post/posts.html 里面，使用 {{each}}循环输出结果
+
+```html
+<tbody>
+    {{each arr}}
+    <tr>
+        <td class="text-center"><input type="checkbox"></td>
+        <td>{{$value.title}}</td>
+        <td>{{$value.admin_nickname}}</td>
+        <td>{{$value.name}}</td>
+        <td class="text-center">{{$value.addtime}}</td>
+        <td class="text-center">{{$value.state}}</td>
+        <td class="text-center">
+            <a href="javascript:;" class="btn btn-default btn-xs">编辑</a>
+            <a href="javascript:;" class="btn btn-danger btn-xs">删除</a>
+        </td>
+    </tr>
+    {{/each}}
+</tbody>
+```
+
+输出的结果中，时间格式不正确，需要在连接数据库的时候，设置一个timezone选项。
+
+修改db.js
+
+```js
+const conn = mysql.createConnection({
+    host: 'localhost',
+    port: 3306,
+    user: 'root',
+    password: '',
+    database: 'alishow75', // 数据库还没有，使用的时候在创建
+    multipleStatements: true, // 表示可以一次性执行多条SQL
+    timezone: 'M' // 该选项表示使用原始的时间
+});
+```
+
+
+
+# 1. 数据接口
+
+## 2.1 前后端程序员的主要职责
+
+- 前端程序员的主要工作：  
+    - 绘制网页页面，并进行美化（html、css）
+    - 实现网页特效（js）
+    - 借助xhr对象向后端发送Ajax请求，并将后端返回的数据渲染到网页上
+- 后端程序员的主要工作：  
+    - 对数据库进行增删改查操作
+    - 将各种操作做成接口提供给前端使用 （通常来讲，后档）
+
+
+
+## 2.2 接口文档示例
+
+![153074088050](alishow_2.assets/01.png)
+
+
+
+在实际工作中，各个公司的文档结构可能不太相同，但是主要的几个说明都有。
+
+- 功能描述 : 描述该接口的实际功能
+- 请求URL地址 :  ajax请求的url地址
+- 请求方式： post、get
+- 请求参数： 随Ajax请求一起发送到后端页面的数据
+- 返回参数： 后端一般返回的是json，此处就是说明返回json结构 
+
+
+
+通过以上几个条件，我们就能够发送Ajax请求，并实现删除评论功能
+
+```js
+$.ajax({
+    type: 'GET',
+    url: 'http://www.alishow.com/admin/api/comments/deleteCmt.php',
+    data: {id: 123},
+    success: function (res) {
+        // res ==> {code: 200, msg:xxx, result:}
+    },
+    dataType: 'json'
+});
+```
+
+
+
+将api.js应用到项目中
+
+- 复制api.js到alishow文件夹中
+
+- app.js中加载api。注册中间件
+
+    ![1559547795569](alishow_2.assets/1559547795569.png)
+
+    
+
+# 3.使用接口完成后台轮播图管理
+
+## 3.1 轮播图表
+
+```sql
+create table ali_pic(
+  pic_id int UNSIGNED auto_increment primary key,
+  pic_url varchar(255) comment '图片的url地址',
+  pic_text varchar(20) comment '图片对应的文字描述',
+  pic_link char(3) comment '图片的跳转链接'
+)engine=myisam default charset=utf8;
+
+-- pic_url: 图片上传到服务器后的地址
+-- pic_text: 图片对应的标题
+-- pic_link: 图片文章对应的url地址，涉及到页面静态化(不属于前端范畴)，直接使用#来代替
+
+```
+
+创建表即可，不需要添加模拟数据。
+
+## 3.2 开发轮播图各项功能前的准备工作
+
+1. 模板在哪里？
+
+    - admin/other/slides.html
+
+2. 路由文件叫什么名？
+
+    - admin_other.js
+
+3. 接口叫什么名字？
+
+    - /admin/other/slides.html
+    - 接口中，通过render方法展示模板
+
+    ```js
+    const express = require('express');
+    
+    const router = express.Router();
+    
+    // 创建路由，展示轮播图模板
+    router.get('/admin/other/slides.html', (req, res) => {
+        res.render(rootPath + '/view/admin/other/slides.html');
+    });
+    
+    module.exports = router;
+    ```
+
+    - app.js 中要加载路由，注册中间件
+
+    ```js
+    app.use(require(rootPath + '/router/admin_other'));
+    ```
+
+4. 模板使用模板继承
+
+![1559547876990](alishow_2.assets/1559547876990.png)
+
+
+
+## 3.3 添加轮播图
+
+### 1）完成异步上传
+
+- 当文件域的内容发生改变的时候，调用 接口文档 中的 ”==Ajax异步上传接口==“，实现异步上传
+- 上传成功后，将返回数据中的path写入到表单的隐藏域中
+
+实现步骤：
+
+1. 给 #image 的元素添加change事件
+2. 获取文件对象（注意使用DOM对象）
+3. 使用FormData的方式将文件对象append到fd对象中
+4. 发送ajax请求到接口（看文档）
+5. 服务器返回信息后，设置隐藏域的value值为 res.path ，以便添加轮播图的时候使用
+
+在slides.html 中，“填坑js”，里面的js代码为：
+
+```js
+///////////////////////////////////////////////
+  //  文件上传
+  ///////////////////////////////////////////////
+  // 当文件域 （id="image") 的内容发生变化的时候，然后调用 api接口，完成上传
+  $('#image').change(function () {
+    // console.log(23);
+    // 获取参数
+    var fd = new FormData();
+    // fd.append('avatar', 文件对象);
+    var fileObj = this.files[0];
+    // console.dir(this);
+    fd.append('avatar', fileObj);
+    // 发送ajax请求
+    $.ajax({
+      type: 'POST',
+      url: '/api/uploads',
+      data: fd,
+      processData: false,
+      contentType: false,
+      success: function (res) {
+        // res ===> {code: 200, message: "上传成功", path: "\upload\avatar-1553173427439.jpg"}
+        // console.log(res);
+        // 上传完成，需要将返回数据中的path写到input#image_hidden的value值上
+        $('input[type="hidden"]').val(res.path);
+      },
+      dataType: 'json'
+    });
+  });
+```
+
+注意，上述代码中涉及到的隐藏域需要我们自行添加到表单中，代码如下：
+
+```html
+<input id="image" class="form-control" name="image" type="file">
+<!-- 上面一行是原来存在的，下面一行是后来添加的隐藏域 -->
+<input type="hidden" name="image_hidden">
+```
+
+> 上传的时候，会出现一个路径错误，因为上传文件保存的文件夹并不存在，需要==自行在alishow文件夹中创建upload文件夹==
+
+### 2）完成添加轮播图
+
+还是使用接口来完成，具体看接口文档。
+
+具体步骤：
+
+1. 查看表单各项的name属性是否符合接口要求，提交按钮是否是button类型
+2. 当点击 slide.html 中的添加按钮的时候，收集表单中的数据
+3. 通过ajax向接口发送请求
+4. 当服务器添加成功后，可以设置一个tr放到tbody中，也可以刷新页面（老师使用的是刷新页面）
+
+```js
+////////////////////////////////////////////////
+  // 添加轮播图
+  ////////////////////////////////////////////////
+  // 当点击添加按钮的时候，收集表单数据，发送到服务器
+  $('button').click(function () {
+    // $('form').serialize() 能够获取到表单中的文本类型的信息，获取数据的时候，是根据name属性获取的
+    $.post('/admin/other/addSildes', $('form').serialize(), function (res) {
+      alert(res.message);
+      if (res.code === 200) {
+        // 添加成功，刷新页面即可
+        location.reload();
+        // 添加成功，将新图片展示到列表位置
+        /* let tr = `
+          <tr>
+              <td class="text-center"><input type="checkbox"></td>
+              <td class="text-center"><img class="slide" src="./${res.data.pic_url}"></td>
+              <td>${res.data.pic_text}</td>
+              <td>${res.data.pic_link}</td>
+              <td class="text-center">
+                <a href="javascript:;" class="btn btn-danger btn-xs">删除</a>
+              </td>
+            </tr>
+        `;
+        // 将新的一行，追加到tbody中
+        $('tbody').append(tr); */
+      }
+    }, 'json');
+  });
+```
+
+
+
+## 3.4 获取所有的轮播图
+
+具体步骤：
+
+1. 在 slides.html 页面中，继续写js代码，发送ajax请求到 获取轮播图的接口（看接口文档）
+
+2. 当服务器返回数据后，使用==**浏览器版**的模板引擎（template-web.js)==
+
+3. 浏览器版模板引擎使用
+
+    1. 引入template-web.js
+    2. 设置模板 （&lt;script  type="text/html" id="ss">  模板中是待循环的tr   &lt;/script>）
+    3. 当ajax请求收到服务器返回的数据后，调用template函数（var html = template('ss',  res.data)）
+    4. 将html放到tbody中
+
+4. 自行定义 模板解析规则 语法，避免和后端的 render 方法冲突
+
+    ```js
+    template.defaults.rules[1].test = /{#([@#]?)[ \t]*(\/?)([\w\W]*?)[ \t]*#}/;
+    ```
+
+5. 循环模板中的tr
+
+模板代码：
+
+```html
+<script type="text/html" id="ss">
+  {#each arr#}
+  <tr>
+      <td class="text-center"><input type="checkbox"></td>
+      <td class="text-center"><img class="slide" src="{#$value.pic_url#}"></td>
+      <td>{#$value.pic_text#}</td>
+      <td>{#$value.pic_link#}</td>
+      <td class="text-center">
+        <a href="javascript:;" class="btn btn-danger btn-xs">删除</a>
+      </td>
+    </tr>
+    {#/each#}
+</script>
+```
+
+获取所有轮播图的代码：
+
+```js
+////////////////////////////////////////////////////
+  // 获取轮播图列表
+  // 标准语法的界定符规则
+  template.defaults.rules[1].test = /{#([@#]?)[ \t]*(\/?)([\w\W]*?)[ \t]*#}/;
+  $.post('/api/other/slides', function (res) {
+    // 当发送了ajax请求到服务器，服务器返回了一个JSON
+    if (res.code !== 200) {
+      alert(res.message);
+      return;
+    }
+
+    // 获取轮播图成功，信息保存在res.data 中
+    var html = template('ss', {
+      arr: res.data
+    });
+    // 把模板和数据组合好的结果，放到tbody中
+    $('tbody').html(html);
+  }, 'json');
+  ////////////////////////////////////////////////////
+```
+
+解决图片不显示的问题。解决办法依然是查看浏览器的 Network面板，查看图片的url是开头是什么，然后去app.js中配置静态资源即可。
+
+```js
+app.js 修改
+app.use('/upload/', express.static(__dirname + '/upload'));
+```
+
+
+
+# 4.使用接口完成登录退出功能
+
+## 4.1 登录功能
+
+具体步骤：
+
+1. 查看login.html 中的表单的name属性是否符合接口要求
+2. 设置登录超链接的href="javascript:"
+3. 当点击登录的时候，发送ajax请求到接口（看接口文档）
+
+    - ==这里需要查看一下接口文档，会看到登录后，将用户信息记录到了session==
+
+        ```js
+        //   /api/login/checkLogin 接口
+        		//登录成功后，注册session
+                req.session.isLogin = true;
+                req.session.userInfo = result[0];
+        ```
+4. 登录完成，给出提示
+
+login.html 中的js代码如下：
+
+```html
+<script src="assets/vendors/jquery/jquery.min.js"></script>
+  <script>
+    // 当点击登录按钮的时候，将邮箱和密码发送给服务器
+    $('a').click(function () {
+      $.post('/api/login/checkLogin', $('form').serialize(), function (res) {
+        alert(res.message);
+        if (res.code === 200) {
+          // 登录成功，跳转到后台首页
+          location.href = '/admin/index.html';
+        }
+      }, 'json');
+    });
+  </script>
+```
+
+## 4.2 登录成功，控制后台所有页面都需要登录才能访问
+
+思路：
+
+可以在所有的接口地址中，加入session的判断，判断是否登录了，但是这种做法比较麻烦，代码量也大。
+
+可以在app.js中，使用中间件来判断是否登录了，然后做出后续决定
+
+app.js中加入中间件：
+
+```js
+//////////// 前台页面不需要登录，所以放到中间件前面
+app.use(require('./router/home'));
+//////////// 判断是否登录
+app.use((req, res, next) => {
+    // 判断是否登录，如果登录，直接next；
+    // 如果没有登录，提示，跳转到登录页面
+    if (req.session.isLogin || req.url === '/admin/login.html' || req.url === '/api/login/checkLogin') {
+        next();
+    } else {
+        res.send('<script>alert("请先登录"); location.href="/admin/login.html";</script>');
+        return;
+    }
+});
+
+//////////////////////////////////////////////////////
+// 后面是处理浏览器的请求
+/////////////////////////////////////////////////////
+app.use(require('./router/admin'));
+app.use(require('./router/admin_cate'));
+app.use(require('./router/admin_user'));
+app.use(require('./router/admin_post'));
+app.use(require('./router/admin_other'));
+app.use(require('./api'));
+```
+
+## 4.3 退出登录
+
+具体步骤：
+
+1. 明确退出按钮在layout.html 父模板中
+2. 在父模板layout.html中，编写js代码，向退出的接口发送ajax请求。完成退出
+
+layout.html 加入js代码如下：
+
+```js
+// 当点击退出的时候，发送请求，完成退出
+    $('#logout').click(function () {
+      $.post('/api/login/logout', function (res) {
+        alert(res.message);
+        if (res.code === 200) {
+          location.href = '/admin/login.html';
+        }
+      }, 'json');
+    });
+```
+
+## 4.4 统一处理后台侧边栏
+
+就是挂好超链接，方便跳转。下面代码是class为nav的ul。你可以替换你的ul。
+
+layout.html 中，侧边栏代码：
+
+```html
+<ul class="nav">
+      <li>
+        <a href="index.html"><i class="fa fa-dashboard"></i>仪表盘</a>
+      </li>
+      <li class="active">
+        <a href="#menu-posts" data-toggle="collapse">
+          <i class="fa fa-thumb-tack"></i>文章<i class="fa fa-angle-right"></i>
+        </a>
+        <ul id="menu-posts" class="collapse in">
+          <li><a href="/admin/post/posts.html">所有文章</a></li>
+          <li><a href="/admin/post/addpost.html">写文章</a></li>
+          <li><a href="/admin/cate/addcate.html">添加新栏目</a></li>
+          <li class="active"><a href="/admin/cate/cate.html">栏目列表</a></li>
+        </ul>
+      </li>
+      <li>
+        <a href="#menu_admin" data-toggle="collapse" class="collapsed">
+          <i class="fa fa-users"></i>管理员<i class="fa fa-angle-right"></i>
+        </a>
+        <ul id="menu_admin" class="collapse">
+          <li><a href="/admin/user/users.html">管理员列表</a></li>
+          <li><a href="/admin/user/adduser.html">添加管理员</a></li>
+        </ul>
+      </li>
+      <li>
+        <a href="#menu-settings" class="collapsed" data-toggle="collapse">
+          <i class="fa fa-cogs"></i>设置<i class="fa fa-angle-right"></i>
+        </a>
+        <ul id="menu-settings" class="collapse">
+          <li><a href="other/nav-menus.html">导航菜单</a></li>
+          <li><a href="/admin/other/slides.html">图片轮播</a></li>
+          <li><a href="other/settings.html">网站设置</a></li>
+        </ul>
+      </li>
+      <li>
+        <a href="comment/comments.html"><i class="fa fa-comments"></i>评论</a>
+      </li>
+    </ul>
+```
+
+
+
+# 5.使用接口完成文章添加
+
+## 5.1 异步上传图片
+
+思路和添加轮播图的思路一样。当文件域的内容发生变化的时候，调用异步上传接口，完成上传。当上传完毕，需要自行设置一个隐藏域来存储上传文件的路径。
+
+addpost.html 中的 js代码：
+
+```js
+/////////////////////////////////////
+  // 文件上传
+  // 当文件域的内容切换的时候，异步上传文件
+  $('#feature').change(function () {
+    // 找到文件对象
+    var fileObj = this.files[0];
+    var fd = new FormData();
+    fd.append('avatar', fileObj);
+    // 发送ajax请求，异步上传
+    $.ajax({
+      type: 'POST',
+      url: '/api/uploads',
+      data: fd,
+      processData: false,
+      contentType: false,
+      success: function (res) {
+        if (res.code === 200) {
+          // 上传成功
+          $('#file').val(res.path);
+        }
+      },
+      dataType: 'json'
+    });
+  });
+```
+
+和轮播图的处理一样，需要自行在添加文章的表单中设置一个 id为 file的隐藏域：
+
+```html
+<div class="form-group">
+    <label for="feature">特色图像</label>
+    <!-- show when image chose -->
+    <img class="help-block thumbnail" style="display: none">
+    <input id="feature" class="form-control" type="file">
+    <!-- 下面一行是新加的，用来存储已上传的图片的路径， 它的name属性必须是pic，因为添加文章的接口要求的 -->
+    <input type="text" name="pic" id="file">
+</div>
+```
+
+
+
+## 5.2 展示添加页面的时候要获取分类
+
+添加文章的时候，必须要选择一个分类（因为文章表设计的时候，article_cateid字段必填）。
+
+所以在展示添加页面的路由 /admin/post/addpost.html 中。查询所有的分类并分配到模板
+
+```js
+// admin_post.js 
+// 显示添加文章的表单页
+router.get('/admin/post/addpost.html', (req, res) => {
+    // 添加文章的时候，需要选择一个分类，所以这里必须查询所有的分类，分配到添加页面
+    db('select * from ali_cate', null, (err, result) => {
+        if (err) throw err;
+        res.render(rootPath + '/view/admin/post/addpost.html', {
+            cate: result
+        });
+    });
+});
+```
+
+addpost.html 模板中，使用each循环所有的分类：
+
+- 注意，option的value必须是分类cate_id
+
+```html
+<div class="form-group">
+    <label for="category">所属分类</label>
+    <select id="category" class="form-control" name="category">
+        {{each cate}}
+        <option value="{{$value.id}}">{{$value.name}}</option>
+        {{/each}}
+    </select>
+</div>
+```
+
+
+
+## 5.3 处理表单
+
+按照惯例，调用接口完成添加之前，处理表单各项
+
+- 查看表单各项是否和接口要求一致（字段个数及name属性是否对应）
+- 表单中多的字段删除
+- 表单中缺少的字段自行添加
+- 设置添加按钮为button类型，并设置类为add_article
+
+下面是我的表单代码：
+
+```html
+<form class="row">
+        <div class="col-md-9">
+          <div class="form-group">
+            <label for="title">标题</label>
+            <input id="title" class="form-control input-lg" name="title" type="text" placeholder="文章标题">
+          </div>
+          <div class="form-group">
+            <label for="content">内容</label>
+            <textarea id="content" class="form-control input-lg" name="content" cols="30" rows="10" placeholder="内容"></textarea>
+          </div>
+        </div>
+        <div class="col-md-3">
+          <div class="form-group">
+            <label for="slug">摘要</label>
+            <textarea id="desc" class="form-control input-lg" name="desc" cols="10" rows="4" placeholder="摘要"></textarea>
+          </div>
+          <div class="form-group">
+            <label for="feature">特色图像</label>
+            <!-- show when image chose -->
+            <img class="help-block thumbnail" style="display: none">
+            <input id="feature" class="form-control" name="feature" type="file">
+            <input type="text" name="pic" id="file">
+            <!-- <input type="button" value="上传"> -->
+          </div>
+          <div class="form-group">
+            <label for="category">所属分类</label>
+            <select id="category" class="form-control" name="category">
+              {{each cate}}
+              <option value="{{$value.id}}">{{$value.name}}</option>
+              {{/each}}
+            </select>
+          </div>
+          <!-- <div class="form-group">
+            <label for="created">发布时间</label>
+            <input id="created" class="form-control" name="created" type="datetime-local">
+          </div> -->
+          <div class="form-group">
+            <label for="status">状态</label>
+            <select id="status" class="form-control" name="status">
+              <option value="草稿">草稿</option>
+              <option value="已发布" selected>已发布</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <button class="btn btn-primary add_article" type="button">保存</button>
+          </div>
+        </div>
+      </form>
+```
+
+
+
+## 5.4 完成添加
+
+点击保存按钮的时候，直接发送ajax请求到接口，完成添加即可
+
+```js
+// 点击保存按钮的时候，收集表单数据，发送给服务器，完成添加
+  $('.add_article').click(function () {
+    $.post('/api/post/addpost', $('form').serialize(), function (res) {
+      alert(res.message);
+      if (res.code === 200) {
+        location.href = '/admin/post/posts.html';
+      }
+    }, 'json');
+  });
+```
+
+
+
+# 6.前台首页开发
+
+## 6.1 session验证登录不应该限制前台页面
+
+只需要将session验证的中间件，后移，到加载完前台的路由之后。
+
+```js
+// 加载前台路由
+const home = require(rootPath + '/router/home');
+app.use(home);
+
+// session验证中间件
+app.use((req, res, next) => {
+    // 判断是否登录，如果登录，直接next；
+    // 如果没有登录，提示，跳转到登录页面
+    if (req.session.isLogin || req.url === '/admin/login.html' || req.url === '/api/login/checkLogin') {
+        next();
+    } else {
+        res.send('<script>alert("请先登录"); location.href="/admin/login.html";</script>');
+        return;
+    }
+});
+
+// 加载后台路由
+.....
+```
+
+
+
+## 6.2 添加数据
+
+添加的所有数据，已经导出为 `alishow70.sql` 文件了。你可以使用 Navicat工具导入到你的数据库，但是==导入之前希望你看一下  `alishow70.sql` 文件里面是怎么写的==，用记事本打开或用编辑器打开都可以看到里面的内容。
+
+> 或者你还是用你自己的数据库吧，没有数据加几条，最起码不至于出错~~~
+
+![1559709570914](../../../../70/alishow/day05/%E7%AC%94%E8%AE%B0/alishow_2.assets/1559709570914.png)
+
+## 6.3 完成首页开发
+
+- 用到的内容
+
+    - 路由文件： home.js
+    - 路由地址： /
+    - 模板：home/index.html
+
+- 分析
+
+    - 页面中需要的数据有
+        - 首页有左边的侧边栏（四个分类 -- fenlei）
+        - 右侧的随机推荐（5篇随机文章 -- suiji）
+        - 中间的轮播图（lunbotu）
+        - 中间的焦点关注 （jiaodian）
+        - 中间的一周热门排行（remen）
+        - 中间的热门推荐（tuijian）
+        - 中间的最新发布（zuixin）
+    - 所以在路由 / 中，应该分别写SQL来查询他们，然后将查询到的所有数据分配到模板
+
+- 修改db.js ，允许一次性执行多条SQL
+
+    ```js
+    连接数据库的时候，加入
+    								multipleStatements: true，
+    表示在执行SQL的时候，可以执行多条SQL
+    
+    // 每条SQL用 ; 隔开，和换行无关
+    let sql = `sql1; sql2; sql3`;
+    // 如果是多条SQL，那么查询结果是一个二维数组，里面的每个小数组分别表示一条SQL查询出来的数据
+    result = [
+        [{}], // 第1条SQL的结果
+        [], // 第2条SQL的结果
+        []  // 第3条SQL的结果
+    ]
+    ```
+
+- 完成路由代码
+
+    - ==SQL虽多，以 ; 分割，一条一条慢慢分析==
+
+    ```js
+    // 定义路由，显示前台首页
+    // router.get('/index.html', (req, res) => {
+    router.get('/', (req, res) => {
+        // 获取轮播图
+        let sql = `select * from ali_pic;
+                   select * from ali_article where article_state="已发布" and article_focus=1 limit 5;
+                   select * from ali_article order by article_click desc limit 5;
+                   select * from ali_article order by article_good desc limit 4;
+                   select c.cate_name, b.admin_nickname, a.* from ali_article a 
+    join ali_admin b on a.article_adminid=b.admin_id 
+    join ali_cate c on a.article_cateid=c.cate_id 
+    order by article_id desc limit 8;
+                   select * from ali_cate;
+                   select * from ali_article order by rand() limit 5`;
+        db(sql, null, (err, result) => {
+            if (err) throw err;
+    		// 将上述所有SQL的查询结果分配到模板
+            res.render(rootPath + '/view/home/index.html', {
+                lunbotu: result[0],
+                jiaodian: result[1],
+                remen: result[2],
+                tuijian: result[3],
+                zuixin: result[4],
+                fenlei: result[5],
+                suiji: result[6]
+            });
+        });
+    });
+    ```
+
+- 完成模板 index.html
+
+    - ==说明，以下所有的文章标题都挂好连接了，但不是这部分讲的，是后面的详情页才讲到的，这里你可以挂好连接，也可以等做到详情页的时候在回来给标题挂连接==。
+
+    - 轮播图部分
+
+        ```html
+        <ul class="swipe-wrapper">
+            {{each lunbotu}}
+            <li>
+                <a href="{{$value.pic_link}}">
+                    <img src="{{$value.pic_url}}">
+                    <span>{{$value.pic_text}}</span>
+                </a>
+            </li>
+            {{/each}}
+        </ul>
+        ```
+
+    - 焦点关注部分
+
+        ```html
+        <ul>
+            {{each jiaodian}}
+            {{if $index == 0}}
+            <li class="large">
+                {{else}}
+            <li>
+                {{/if}}
+                <a href="/detail.html?aid={{$value.article_id}}">
+                    <img src="{{$value.article_file}}" alt="">
+                    <span>{{$value.article_title}}</span>
+                </a>
+            </li>
+            {{/each}}
+        </ul>
+        ```
+
+    - 一周热门排行部分
+
+        ```html
+        <ol>
+            {{each remen}}
+            <li>
+                <i>{{$index + 1}}</i>
+                <a href="/detail.html?aid={{$value.article_id}}">{{$value.article_title}}</a>
+                <a href="javascript:;" class="like">赞({{$value.article_good}})</a>
+                <span>阅读 ({{$value.article_click}})</span>
+            </li>
+            {{/each}}
+        </ol>
+        ```
+
+    - 热门推荐部分
+
+        ```html
+        <ul>
+            {{each tuijian}}
+            <li>
+                <a href="/detail.html?aid={{$value.article_id}}">
+                    <img src="{{$value.article_file}}" alt="">
+                    <span>{{$value.article_title}}</span>
+                </a>
+            </li>
+            {{/each}}
+        </ul>
+        ```
+
+    - 最新发布部分
+
+        ```html
+        <h3>最新发布</h3>
+        {{each zuixin}}
+        <div class="entry">
+            <div class="head">
+                <span class="sort">{{$value.cate_name}}</span>
+                <a href="/detail.html?aid={{$value.article_id}}">{{$value.article_title}}</a>
+            </div>
+            <div class="main">
+                <p class="info">{{$value.admin_nickname}} 发表于 {{$value.article_addtime}}</p>
+                <p class="brief">
+                    {{$value.article_desc}}
+                </p>
+                <p class="extra">
+                    <span class="reading">阅读({{$value.article_click}})</span>
+                    <!-- <span class="comment">评论(0)</span> -->
+                    <a href="javascript:;" class="like">
+                        <i class="fa fa-thumbs-up"></i>
+                        <span>赞({{$value.article_good}})</span>
+                    </a>
+                    <!-- <a href="javascript:;" class="tags">
+        分类：<span>星球大战</span>
+        </a> -->
+                </p>
+                <a href="javascript:;" class="thumb">
+                    <img src="{{$value.article_file}}" alt="">
+                </a>
+            </div>
+        </div>
+        {{/each}}
+        ```
+
+- 父模板layout.html
+
+    - 左侧侧边栏部分
+
+        - ==侧边栏分类的超链接挂了分类的id及分类的名称，是后面开发列表页的时候才加的，这里你可以加上，也可以等做列表页的时候再加==
+
+        ```html
+        <ul class="nav">
+            {{each fenlei}}
+            <li><a href="/list.html?id={{$value.cate_id}}&cate_name={{$value.cate_name}}"><i class="fa fa-{{$value.cate_icon}}"></i>{{$value.cate_name}}</a></li>
+            {{/each}}
+        </ul>
+        ```
+
+    - 右侧随机文章部分
+
+        ```html
+        <h4>随机推荐</h4>
+        <ul class="body random">
+            {{each suiji}}
+            <li>
+                <a href="/detail.html?aid={{$value.article_id}}">
+                    <p class="title">{{$value.article_title}}</p>
+                    <p class="reading">阅读({{$value.article_click}})</p>
+                    <div class="pic">
+                        <img src="{{$value.article_file}}" alt="">
+                    </div>
+                </a>
+            </li>
+            {{/each}}
+        </ul>
+        ```
+
+        
+
+# 7.前台列表页开发
+
+- 用到的内容
+
+    - 路由文件 ： home.js
+    - 路由地址： /list.html
+    - 模板文件： home/list.html
+
+- 分析
+
+    - 当点击页面左侧侧边栏的分类名称的时候，需要跳转到列表页list.html
+    - 在list.html中需要显示当前分类的文章，所以在给分类名称挂超链接的时候，需要把分类id挂上
+    - 到list.html中，获取地址栏的分类id，然后通过它写SQL查询列表页需要的文章
+    - 除此之外，列表页也要查询左右侧边栏的数据及分类名称
+
+- 到路由list.html中，编写SQL，查询页面所需的数据
+
+    - 前面在左侧侧边栏，已经给分类名称挂了超链接，连接到list.html，并且挂了id和cate_name两个参数
+
+    ```js
+    // 定义路由，显示前台的列表页
+    router.get('/list.html', (req, res) => {
+        // 获取分类的id，它在地址栏上
+        let id = req.query.id ? req.query.id : 1;
+        let cate_name = req.query.cate_name ? req.query.cate_name : '慢生活';
+        let sql = `
+        select * from ali_cate;
+        select * from ali_article order by rand() limit 5;
+        select * from ali_article where article_cateid = ${id}
+        `;
+        db(sql, null, (err, result) => {
+            res.render(rootPath + '/view/home/list.html', {
+                fenlei: result[0], // fenlei必须是这个名字，因为父模板就需要这个fenlei
+                suiji: result[1], // 侧边栏的名字也必须叫做suiji，因为父模板使用的变量就是suiji
+                art: result[2], // 当前列表页使用的文章
+                cate_name: cate_name
+            });
+        });
+    });
+    ```
+
+- 模板中显示数据即可
+
+    ```html
+    <h3>{{cate_name}}</h3>
+    {{each art}}
+    <div class="entry">
+        <div class="head">
+            <a href="/detail.html?aid={{$value.article_id}}">{{$value.article_title}}</a>
+        </div>
+        <div class="main">
+            <p class="info">admin 发表于 {{$value.article_addtime}}</p>
+            <p class="brief">
+                {{$value.article_desc}}
+            </p>
+            <p class="extra">
+                <span class="reading">阅读({{$value.article_click}})</span>
+                <!-- <span class="comment">评论(0)</span> -->
+                <a href="javascript:;" class="like">
+                    <i class="fa fa-thumbs-up"></i>
+                    <span>赞({{$value.article_good}})</span>
+                </a>
+                <a href="javascript:;" class="tags">
+                    分类：<span>{{cate_name}}</span>
+                </a>
+            </p>
+            <a href="javascript:;" class="thumb">
+                <img src="{{$value.article_file}}" alt="">
+            </a>
+        </div>
+    </div>
+    {{/each}}
+    ```
+
+    
+
+# 8.前台详情页开发
+
+- 用到的内容
+
+    - 路由文件： home.js
+    - 路由地址：/detail.html
+    - 模板地址：home/detail.html
+
+- 分析
+
+    - 详情页，顾名思义，就是显示文章详情的页面
+    - 当点击首页或者列表页的文章标题的时候，需要跳转到detail.html详情页，并且需要文章id参数
+    - 在详情页路由接口detail.html中，获取当前文章的id（**为了区分，这里叫做aid**）
+    - 通过aid获取当前文章信息
+    - 详情页也要获取左右侧边栏的内容
+
+- 路由接口代码
+
+    ```js
+    // 定义路由，显示前台的详情页
+    router.get('/detail.html', (req, res) => {
+        // 获取文章id，即aid，通过aid来获取一篇文章
+        let aid = req.query.aid ? req.query.aid : 1;
+        let sql = `
+        select * from ali_cate;
+        select * from ali_article order by rand() limit 5;
+        select * from ali_article order by article_good desc limit 4;
+        select * from ali_article where article_id = ${aid}
+        `;
+        db(sql, null, (err, result) => {
+            res.render(rootPath + '/view/home/detail.html', {
+                fenlei: result[0], // 必须叫fenlei
+                suiji: result[1], // 必须叫suiji
+                remen: result[2],
+                article: result[3][0] // 0,因为最后一条SQL取到的数据只有一条，所以加一个下标0，那么article就是一个对象了
+            });
+        });
+    });
+    ```
+
+- 模板detail.html代码
+
+    ```html
+    <h2 class="title">
+        <a href="javascript:;">{{article.article_title}}</a>
+    </h2>
+    <div class="meta">
+        <span>DUX主题小秘 发布于 {{article.article_addtime}}</span>
+        <span>分类: <a href="javascript:;">奇趣事</a></span>
+        <span>阅读: ({{article.article_click}})</span>
+        <!-- <span>评论: (143)</span> -->
+    </div>
+    <p class="article_text">
+        {{article.article_text}}
+    </p>
+    ```
+
+    > 详情页还有一个热门推荐，自行获取吧~~~
+
+# 9.分页
+
+- 分析
+
+    - 分页需要使用到 接口工具 api.js
+        - 接口名： /api/post/page
+        - 请求参数： pageno 表示需要的页码
+        - 返回参数中有data，表示该页的数据
+    - 分页需要使用插件 twbs-pagination
+        - 压缩包中有具体示例代码（需要加载bootstrap的css和js文件、需要jquery文件、需要插件js文件）
+
+- 在后台post/posts.html 使用插件
+
+    - 经过查看，后台的父模板已经加载了bootstrap的css和js文件以及jquery文件
+
+    - 加载插件js文件
+
+        ```html
+        <script src="assets/vendors/twbs-pagination/jquery.twbsPagination.min.js"></script>
+        ```
+
+    - 去压缩包中的示例代码中复制插件的使用代码，然后放到posts.html中
+
+        ```js
+        // 复制过来的代码
+        
+        $(function () {
+            window.pagObj = $('#pagination').twbsPagination({
+                totalPages: 35,
+                visiblePages: 10,
+                onPageClick: function (event, page) {
+                    console.info(page + ' (from options)');
+                }
+            }).on('page', function (event, page) {
+                console.info(page + ' (from event listening)');
+            });
+        });
+        
+        ```
+
+    - 代码中的 .on 事件和 onPageClick都是单击事件，所以删除其中一个，代码变化如下
+
+        ```js
+        $(function () {
+            window.pagObj = $('#pagination').twbsPagination({
+                totalPages: 35,
+                visiblePages: 10,
+                onPageClick: function (event, page) {
+                    console.info(page + ' (from options)'); // 经过浏览器工具查看，当点击页面中的数字页码时，输出的page表示该页码
+                }
+            })
+        });
+        ```
+
+    - 在onPageClick事件中，向接口 /api/post/page 发送post方式请求，请求第一页的数据
+
+        - 下面只是onPageClick部分代码
+
+        ```js
+        ...
+        onPageClick: function (event, page) {
+            // console.info(page); // 表示当前的页号
+            // 发送ajax请求到 api 中提供的 /api/post/page 接口
+            $.post('/api/post/page', {pageno: page}, function (res) {
+                if (res.code === 200) {
+                    
+                }
+            });
+        }
+        ....
+        ```
+
+    - 请求成功，使用浏览器版的模板引擎将数据显示到页面中
+
+        - 下面是使用浏览器模板引擎的前两步（加载js文件和设置模板）
+
+            ```html
+            <script src="assets/vendors/art-template/template-web.js"></script>
+            
+            <script type="text/html" id="sss">
+              {#each aa#}
+              <tr>
+                <td class="text-center"><input type="checkbox"></td>
+                <td>{#$value.article_title#}</td>
+                <td>{#$value.admin_nickname#}</td>
+                <td>{#$value.cate_name#}</td>
+                <td class="text-center">{#$value.article_addtime#}</td>
+                <td class="text-center">{#$value.article_state#}</td>
+                <td class="text-center">
+                  <a href="javascript:;" class="btn btn-default btn-xs">编辑</a>
+                  <a href="javascript:;" class="btn btn-danger btn-xs">删除</a>
+                </td>
+              </tr>
+              {#/each#}
+            </script>
+            ```
+
+        - 下面是完整的分页JS代码
+
+            ```js
+            template.defaults.rules[1].test = /{#([@#]?)[ \t]*(\/?)([\w\W]*?)[ \t]*#}/;
+            $(function () {
+                window.pagObj = $('#pagination').twbsPagination({
+                    totalPages: 35,  // 总页数
+                    visiblePages: 10, // 显示出来的页码有10个
+                    first: '首页',
+                    prev: '上一页',
+                    next: '下一页',
+                    last: '尾页',
+                    onPageClick: function (event, page) {
+                        // console.info(page); // 表示当前的页号
+                        // 发送ajax请求到 api 中提供的 /api/post/page 接口
+                        $.post('/api/post/page', {pageno: page}, function (res) {
+                            if (res.code === 200) {
+                                // res.data 就是服务器返回的数据
+                                var html = template('sss', {
+                                    aa: res.data
+                                });
+                                // 应该把html放到tbody中
+                                $('tbody').html(html);
+                            }
+                        });
+                    }
+                }) 
+            });
+            ```
+
+    - 说明
+
+        - 接口 /api/post/page 代码中定义的每页显示两条数据，你可以自己修改
+
+        - 如果需要真正的totalPages参数（总页数），可以自行调用接口获取
+
+        - 使用了接口，自己曾经在 /admin/post/posts.html 路由中写的查询代码就不需要了，它将变化成下面的样子
+
+            ```js
+            // 显示文章列表
+            router.get('/admin/post/posts.html', (req, res) => {
+                // 这里原来是使用db查询所有的文章的代码，现在将他们删除
+                res.render(rootPath + '/view/admin/post/posts.html');
+            });
+            ```
+
+            
+
+# 10.表单验证
+
+一个项目必然有很多地方需要使用表单提交数据到服务器，而为了避免不必要的错误，前端需要为表单设置表单验证，以保证用户填写正确的数据。
+
+表单验证，我们自己可以写代码来验证，当然也可以寻求使用插件来实现表单验证，下面介绍一个表单验证插件`jquery.validate.js`
+
+**使用方法**：
+
+1) 引入3个文件：
+
+- jquery.js： 该插件是基于jquery的，所以必须先引入jquery.js文件
+- jquery.validate.js： 插件的核心文件 （压缩包中的dist文件夹中）
+- messages_zh.js： 语言包，未通过验证时的提示信息，该文件在 dist/localization目录下 （可选）
+
+
+
+2) validate方法：
+
+```js
+//获取表单的jq对象，再调用validate就能进行表单数据验证了
+// obj 是验证方案配置项 --- js对象形式
+$('#mainForm').validate(obj)
+```
+
+
+
+3) obj 结构
+
+- rules: 验证方案
+- messages: 当验证未通过时的提示信息
+- submitHandler: 表单提交事件，当表单验证全部通过时才能提交表单到目标地址，否则显示错误信息
+
+```js
+$('表单').validate({
+    rules: { 
+        表单项1name值: {
+        	验证方式:xx,
+            验证方式:yy
+    	},
+        表单项2name值: {
+        	验证方式:xx,
+            验证方式:yy
+    	}
+    },
+    messages: { //验证未通过时的提示信息
+        表单项1name值: {
+        	对应的验证方式:提示信息,
+            对应的验证方式:提示信息
+    	},
+        表单项2name值: {
+        	对应的验证方式:提示信息,
+            对应的验证方式:提示信息
+    	}
+    },
+    submitHandler: function () {
+        // 如果验证通过，会调用这个方法，我们可以在这里完成ajax提交工作
+        alert('验证通过');
+    }
+})
+```
+
+
+
+主要验证方式：
+
+![1559756658094](alishow_2.assets/1559756658094.png)
+
+可以在后台添加管理员的时候，使用一些表单验证
+
+adduser.html中
+
+```html
+{{block 'js'}}
+
+<script src="assets/vendors/dist/jquery.validate.js"></script>
+<script src="assets/vendors/dist/localization/messages_zh.js"></script>
+
+<script>
+  // 表单验证，验证通过，收集表单数据，Ajax发送给服务器的 /admin/user/add
+  $('form').validate({
+    // rules // 规则
+    // messages // 验证失败时提示的信息
+    // submitHandler: function () {} // 表示通过验证时，触发的函数
+    rules: {
+      admin_email: {
+        required: true, // 验证该项必填
+        email: true// 验证邮箱格式正确
+      },
+      admin_nickname: {
+        required: true, // 验证昵称必填
+        maxlength: 8,
+        minlength: 2
+      }
+    },
+    messages: {
+      admin_email: {
+        required: '邮箱必填~~~', // 验证该项必填的提示
+        email: '邮箱格式不正确~~~'// 验证邮箱格式正确的提示
+      },
+      admin_nickname: {
+        required: '昵称必填', // 验证昵称必填
+        maxlength: '长度不能超过8位',
+        minlength: '长度不能低于2位'
+      }
+    },
+    submitHandler: function () {
+      // 验证通过，执行这个函数
+      // alert('验证通过');
+      $.ajax({
+        type: 'POST',
+        url: '/admin/user/add',
+        data: $('form').serialize(),
+        success: function (res) {
+          alert(res.message);
+          if (res.code === 200) {
+            location.href = '/admin/user/users.html';
+          }
+        }
+      });
+    }
+  });
+</script>
+{{/block}}
+```
+
+
+
+# 11.ueditor富文本编辑器
+
+富文本编辑器，也叫做HTML编辑器。
+
+下载ueditor，将压缩包里面的文件夹解压出来，重命名为ueditor，然后复制到项目后台view/admin/assets/vendors里面。
+
+然后在添加文章的时候，使用它
+
+addpost.html
+
+- 需要将前面的文章内容的textarea注释掉，然后加入script标签
+
+    ```html
+    <div class="form-group">
+            <label for="content">内容</label>
+            <!-- <textarea id="content" class="form-control input-lg" name="content" cols="30" rows="10"
+              placeholder="内容"></textarea> -->
+            <script id="content" type="text/plain" name="content"></script>
+    
+          </div>
+    ```
+
+    最下方，添加如下代码即可实现效果
+
+```html
+<!-- 下面是使用ueditor -->
+<script src="assets/vendors/ueditor/ueditor.config.js"></script>
+<script src="assets/vendors/ueditor/ueditor.all.min.js"></script>
+<script src="assets/vendors/ueditor/lang/zh-cn/zh-cn.js"></script>
+
+<script>
+  // 创建编辑器，getEditor方法需要容器的id
+  var ue = UE.getEditor('content');
+</script>
+```
+
+
+
+# 12.MVC开发模式
+
+MVC开发模式，可以人员分配更加合理，有效的提供开发效率，使得代码的结构更加清晰。
+
+M：model （模型） --  模式是用于处理数据的
+
+V：view（视图）-- 视图，即模板，即HTML页面
+
+C：controller（控制器） -- 起到调度的作用，调用模型和模板，完成用户的请求
+
+![1559804338379](alishow_2.assets/1559804338379.png)
+
+前台首页使用MVC模式：
+
+- view文件夹就是V层
+- router文件夹就是C层
+- alishow中创建model文件夹，它里面的文件就是M层
+
+在前台首页体验使用MVC：
+
+1. alishow中创建model文件夹，它里面的文件就是M层
+2. 在model文件夹创建home.js模型文件，负责查询前台所需的数据
+3. model/home.js中创建三个方法，分别获取前台首页、列表页、详情页的数据
+4. 将model/home.js中的方法导出，目的是在控制器层使用它们
+5. router里面的home.js在需要数据到时候，加载模型文件，调用里面的方法获取数据，并通过模板展示数据
+
+model/home.js代码：
+
+```js
+// model中的home.js 模型，负责前台数据的获取
+
+const db = require('../db');
+// 查询前台所需的数据
+// 获取轮播图的方法
+// 获取随机推荐的方法
+// ....
+// 前台首页需要的数据
+let index = (fn) => {
+    // 负责获取前台首页的数据 
+    let sql = `
+    select * from ali_pic;
+    select * from ali_article order by article_good desc limit 5;
+    select * from ali_article order by article_click desc limit 5;
+    select * from ali_article order by article_bad desc limit 4;
+    select b.admin_nickname, c.cate_name, a.* from ali_article a 
+join ali_admin b on a.article_adminid = b.admin_id 
+join ali_cate c on a.article_cateid = c.cate_id 
+order by article_id desc limit 8;
+    select * from ali_cate;
+    select * from ali_article order by rand() limit 5
+    `;
+    db(sql, null, (err, result) => {
+        if (err) throw err;
+        // 得到查询结果是result
+        fn(result);
+    });
+};
+
+let list = () => {
+    // 负责获取前台列表页的数据
+}
+
+let detail = () => {
+    // 负责获取前台详情页的数据
+}
+
+// 需要将所有的函数导出
+module.exports = {
+    index,
+    list,
+    detail
+}
+```
+
+控制器 router/home.js中使用模型文件，获取数据
+
+```js
+// router.get('/index.html', (req, res) => {
+router.get('/', (req, res) => {
+    // 读取前台页面，返回给浏览器
+    // 前台需要的数据有：轮播图、焦点关注、一周热门排行、热门推荐、最新发布、左侧边栏、右侧边栏随机推荐
+    // 将查询到的所有数据，分配到模板
+    home_model.index((result) => {
+        res.render(rootPath + '/view/home/index.html', {
+            lunbotu: result[0],
+            jiaodian: result[1],
+            remen: result[2],
+            tuijian: result[3],
+            zuixin: result[4],
+            fenlei: result[5],
+            suiji: result[6]
+        });
+    });
+});
+```
+
+
+
+# 13.异步与单线程
+
+## 13.1 同步和异步
+
+- sync 同步，async 异步
+- I/O 操作都是耗时(阻塞)操作，例如：文件操作、网络操作
+- `fs` 模块对文件的几乎所有操作都有同步和异步两种形式
+    - 例如：`readFile()` 和 `readFileSync()`。
+- 同步与异步文件系统调用的区别
+    - **同步**调用立即执行，会**阻塞**后续代码继续执行
+    - **异步**调用**不阻塞**后续代码继续执行，需要**回调函数**作为额外的参数，通常包含一个错误作为回调函数的第一个参数
+    - 异步调用通过判断第一个 err 对象来处理异常
+    - **异步调用结果往往通过回调函数来进行获取**
+
+> Node 只在文件IO操作中，提供了同步调用和异步调用两种形式，两者可以结合使用，
+> 但是推荐能使用异步调用解决问题的情况下，少用同步调用。
+
+## 13.2 进程和线程(了解)
+
+- 进程
+
+    - 正在执行的应用程序
+    - 一个进程至少有一个线程
+
+- 线程
+
+    - 用来执行应用程序中的代码 
+    - 在一个进程内部，可以有很多的线程，至少有一个线程
+    - 在一个线程内部，同时只可以干一件事 
+    - 而且传统的开发方式大部分都是 I/O 阻塞的 
+    - 所以需要多线程来更好的利用硬件资源 
+    - 给人带来一种错觉：线程越多越好(线程的创建需要耗时，线程本身需要占用内存)
+
+- Node.js 是单线程的
+
+    - Node.js 用来执行 js 的线程只有一个
+
+    - Node.js (libuv)内部维护了一个线程池
+
+    - Node 中将所有的阻塞操作交给了内部实现的线程池 
+
+    - Node 本身主线程主要就是不断的往返调度
+
+        ![mg](alishow_2.assets/592743-20161111224042999-959097440.png)
+
+![1img](alishow_2.assets/ee34c00c2e7f4de39a95029baafdf8f5.jpeg)
+
+# 14.Promise - ES6新对象
+
+## 14.1 回调地狱
+
+![cllback](alishow_2.assets/0-callback.jpg)
+
+JS中或node中，都大量的使用了回调函数进行异步操作，而异步操作什么时候返回结果是不可控的，如果我们希望几个异步请求按照顺序来执行，那么就需要将这些异步操作嵌套起来，嵌套的层数特别多，就叫做回调地狱。
+
+下面的案例就有回调地狱的意思：
+
+案例：有 a.txt、b.txt、c.txt三个文件，使用fs模板按照顺序来读取里面的内容，代码：
+
+```js
+// 将读取的a、b、c里面的内容，按照顺序输出
+const fs = require('fs');
+
+// 读取a文件
+fs.readFile('./a.txt', 'utf-8', (err, data) => {
+    if (err) throw err;
+    console.log(data.length);
+    // 读取b文件
+    fs.readFile('./b.txt', 'utf-8', (err, data) => {
+        if (err) throw err;
+        console.log(data);
+        // 读取c文件
+        fs.readFile('./c.txt', 'utf-8', (err, data) => {
+            if (err) throw err;
+            console.log(data);
+        });
+    });
+});
+```
+
+> 案例中，只有三个文件，试想如果需要按照顺序读取的文件非常多，那么嵌套的代码将会多的可怕，这就是回调地狱的意思。
+
+## 14.2 Promise简介
+
+- Promise对象可以解决回调地狱的问题
+- Promise 是异步编程的一种解决方案，比传统的解决方案（回调函数和事件）更合理和更强大
+- Promise可以理解为一个容器，里面可以编写异步请求的代码
+- 从语法上说，Promise 是一个对象，从它可以获取异步操作的消息
+
+
+
+## 14.3 Promise简单使用
+
+Promise是“承诺”的意思，实例中，它里面的异步操作就相当于一个承诺，而承诺就会有两种结果，要么完成了承诺的内容，要么失败。
+
+所以，使用Promise，分为两大部分，首先是有一个承诺（异步操作），然后再兑现结果。
+
+第一部分：定义“承诺”
+
+```js
+// 实例化一个Promise，表示定义一个容器，需要给它传递一个函数作为参数，而该函数又有两个形参，通常用resolve和reject来表示。该函数里面可以写异步请求的代码
+// 换个角度，也可以理解为定下了一个承诺
+let p = new Promise((resolve, reject) => {
+    // 形参resolve，单词意思是 完成
+    // 形参reject ，单词意思是 失败
+    fs.readFile('./a.txt', 'utf-8', (err, data) => {
+        
+        if (err) {
+            // 失败，就告诉别人，承诺失败了
+            reject(err);
+        } else {
+            // 成功，就告诉别人，承诺实现了
+            resolve(data);
+        }  
+    });
+});
+```
+
+第二部分：获取“承诺”的结果
+
+```js
+// 通过调用 p 的then方法，可以获取到上述 “承诺” 的结果
+// then方法有两个函数类型的参数，参数1表示承诺成功时调用的函数，参数2可选，表示承诺失败时执行的函数
+p.then(
+	(data) => {},
+    (err) => {}
+);
+```
+
+使用Promise的语法：
+
+```js
+const fs = require('fs');
+// 使用Promise，语法分为两大部分
+// 1. 定义一个承诺
+let p = new Promise((resolve, reject) => {
+    // resolve 完成，表示承诺实现了
+    // reject  失败，表示承诺失败了
+    // 异步读取a.txt
+    fs.readFile('./a.txt', 'utf-8', (err, data) => {
+        if (err) return reject(err); // 读取文件失败，调用表示失败的方法
+        resolve(data.length); // 读取文件成功，调用表示成功的方法
+    })
+});
+
+// 2. 获取承诺的结果
+// then方法有两个函数类型的参数，函数1表示承诺中的resolve函数，函数2可选，表示承诺中的reject函数
+// p.then(函数1, 函数2);
+p.then(function (data) {
+    console.log(data);
+},function (err) {
+    console.log(err);
+});
+```
+
+
+
+## 14.4 then方法的链式调用
+
+- 前一个then里面返回的字符串，会被下一个then方法接收到
+
+- 前一个then里面返回的Promise对象，并且调用resolve的时候传递了数据，数据会被下一个then接收到
+
+- 前一个then里面如果没有调用resolve，则后续的then不会接收到任何值
+
+    ```js
+    const fs = require('fs');
+    
+    let p = new Promise((resolve, reject) => {
+        // 执行一个异步操作
+        fs.readFile('./a.txt', 'utf-8', (err, data) => {
+            err ? reject(err) : resolve(data);
+        });
+    });
+    
+    p
+    .then((data) => {
+        console.log(data.length);
+        return new Promise((resolve, reject) => {
+            resolve('hello');
+        });
+    })
+    .then((data) => {
+        console.log(data);
+        return 'yyy';
+    })
+    .then((data) => {
+        console.log(data);
+    })
+    .catch((err) => {
+        console.log(err);
+    });
+    ```
+
+    > catch 方法可以统一获取错误信息
+
+## 14.5 封装按顺序异步读取文件的函数
+
+```js
+function read(path) {
+    return new Promise((resolve, reject) => {
+        fs.readFile(path, 'utf-8', (err, data) => {
+            if (err) reject(err);
+            resolve(data);
+        })
+    });
+}
+
+
+read('./a.txt')
+    .then((data) => {
+         console.log(data);
+         return read('./b.txt');
+     })
+    .then((data) => {
+        console.log(data);
+        return read('./c.txt');
+    })
+    .then((data) => {
+        console.log(data);
+    })
+    .catch((err) => {
+        console.log(err);
+    });
+
+```
+
+
+
+## 14.6 封装db函数
+
+db.js
+
+```js
+const mysql = require('mysql');
+
+const conn = mysql.createConnection({
+    host: '127.0.0.1',
+    user: 'root',
+    password: 'root',
+    database: 'alishow71'
+});
+
+conn.connect();
+
+function querySql (sql, params) {
+    return new Promise(function (resolve, reject) {
+        conn.query(sql, params, (err, result) => {
+            if (err) {
+                // 读取数据失败了，关闭连接
+                conn.end();
+                return reject(err);
+            }
+            // 读取数据成功了，也要关闭连接
+            conn.end();
+            resolve(result);
+        })
+    })
+}
+
+module.exports = querySql;
+
+```
+
+
+
+test.js
+
+```js
+const db = require('./db.js');
+
+db('select * from ali_cate where cate_id=?', '1').then(function (data) {
+    console.log(data);
+}).catch(function (data) {
+    console.log(data);
+})
+
+```
+
+
+
+## 14.7 ES7新增 async 和 await 修饰符
+
+Promise的then方法和catch方法依然有点奇怪，实现过程也比较复杂。
+
+ES7提供了async和await关键字。await和async关键词能够将异步请求的结果以返回值的方式返回给我们。
+
+- await和async 是es7扩展出的关键词，功能接收Promise中resolve或者reject的返回值
+- async和await需要配合使用，没有async修改的函数中使用await是没有意义的
+- async用来修饰一个包含有Promise调用的函数
+- await需要定义在async函数内部，用来修饰调用Promise返回值的函数
+
+```js
+function read(path) {
+    return new Promise((resolve, reject) => {
+        fs.readFile(path, 'utf-8', (err, data) => {
+            if (err) reject(err);
+            resolve(data);
+        })
+    });
+}
+
+// 使用async修饰一个函数
+async function abcd() {
+    // 下面的三个调用，都使用await来修饰getData，这样就可以将resolve的异步结果以返回值的形式获取到
+    let a = await read('./a.txt');
+    let b = await read('./b.txt');
+    let c = await read('./c.txt');
+    console.log(a);
+    console.log(b);
+    console.log(c);
+}
+abcd();
+```
+
+
